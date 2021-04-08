@@ -31,7 +31,12 @@ MP4Reader::MP4Reader(const string &strVhost,const string &strApp, const string &
 
     _demuxer = std::make_shared<MP4Demuxer>();
     _demuxer->openMP4(_file_path);
-    _mediaMuxer.reset(new MultiMediaSourceMuxer(strVhost, strApp, strId, _demuxer->getDurationMS() / 1000.0f, true, true, false, false));
+    GET_CONFIG(bool, fileRepeat, Record::kFileRepeat);
+    float dur_sec = 0;
+    if(!fileRepeat){
+	dur_sec =  _demuxer->getDurationMS() / 1000.0f;
+    }
+    _mediaMuxer.reset(new MultiMediaSourceMuxer(strVhost, strApp, strId, dur_sec, true, true, false, false));
     auto tracks = _demuxer->getTracks(false);
     if(tracks.empty()){
         throw std::runtime_error(StrPrinter << "该mp4文件没有有效的track:" << _file_path);
@@ -63,6 +68,7 @@ bool MP4Reader::readSample() {
     GET_CONFIG(bool, fileRepeat, Record::kFileRepeat);
     if (eof && fileRepeat) {
         //需要从头开始看
+	WarnL << "播放结束，从头播放！";
         seekTo(0);
         return true;
     }

@@ -101,7 +101,8 @@ void System::startDaemon() {
         signal(SIGINT, [](int) {
             WarnL << "收到主动退出信号,关闭父进程与子进程";
             kill(pid,SIGINT);
-            exit(0);
+            //exit(0);
+            _exit(0);
         });
 
         do{
