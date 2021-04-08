@@ -15,6 +15,10 @@
 #include "Common/config.h"
 #include "Player/MediaPlayer.h"
 #include "Extension/Frame.h"
+//add by lvjiong for MediaPusher
+#include "Pusher/MediaPusher.h"
+#include "Player/PlayerProxy.h"
+
 using namespace std;
 using namespace toolkit;
 using namespace mediakit;
@@ -22,6 +26,7 @@ using namespace mediakit;
 #define JNI_API(retType,funName,...) extern "C"  JNIEXPORT retType Java_com_zlmediakit_jni_ZLMediaKit_##funName(JNIEnv* env, jclass cls,##__VA_ARGS__)
 #define MediaPlayerCallBackSign "com/zlmediakit/jni/ZLMediaKit$MediaPlayerCallBack"
 #define MediaFrameSign "com/zlmediakit/jni/ZLMediaKit$MediaFrame"
+#define MediaPusherCallBackSign "com/zlmediakit/jni/ZLMediaKit$MediaPusherCallBack"
 
 
 string stringFromJstring(JNIEnv *env,jstring jstr){
@@ -177,6 +182,8 @@ JNI_API(jboolean,startDemo,jstring ini_dir){
             mINI::Instance()[Http::kRootPath] = mINI::Instance()[Hls::kFilePath] = sd_path + "/httpRoot";
             //mp4录制点播根目录修改默认路径
             mINI::Instance()[Record::kFilePath] = mINI::Instance()[Hls::kFilePath] = sd_path + "/httpRoot";
+			mINI::Instance()[Record::kFileRepeat] = true;//add by lvjiong 默认开启
+			mINI::Instance()[General::kModifyStamp] = true;//add by lvjiong 默认开启
             //hls根目录修改默认路径
             mINI::Instance()[Hls::kFilePath] = mINI::Instance()[Hls::kFilePath] = sd_path + "/httpRoot";
             //替换默认端口号(在配置文件未生成时有效)
@@ -249,7 +256,7 @@ JNI_API(jlong,createMediaPlayer,jstring url,jobject callback){
         if (!strongPlayer) {
             return;
         }
-        emitEvent((jobject)globalWeakRef,"onShutdown","(ILjava/lang/String;)V",(jint)ex.getErrCode(),env->NewStringUTF(ex.what()));
+        emitEvent((jobject)globalWeakRef,"onPlayShutdown","(ILjava/lang/String;)V",(jint)ex.getErrCode(),env->NewStringUTF(ex.what()));
     });
 
     (*player)[Client::kRtpType] = Rtsp::RTP_TCP;
@@ -263,4 +270,152 @@ JNI_API(jlong,createMediaPlayer,jstring url,jobject callback){
 JNI_API(void,releaseMediaPlayer,jlong ptr){
     MediaPlayer::Ptr *player = (MediaPlayer::Ptr *)ptr;
     delete player;
+}
+
+
+JNI_API(jlong,createMediaPusher,jstring filePath,jstring pushUrl,jobject callback){
+	string pushUrl_str = stringFromJstring(env,pushUrl);
+	const string filePath_str = stringFromJstring(env,filePath);
+	string schema = FindField(pushUrl_str.data(), nullptr,"://").substr(0,4);
+	string vhost = DEFAULT_VHOST;
+	string app = "live";
+	string stream = "stream";
+	auto poller = EventPollerPool::Instance().getPoller();
+	//推流器，保持强引用
+	MediaPusher::Ptr pusher,*ret;
+	
+	weak_ptr<MediaPusher> weakPusher = pusher;
+	jobject globalWeakRef = env->NewWeakGlobalRef(callback);
+	
+	auto src = MediaSource::createFromMP4(schema,vhost,app,stream,filePath_str,false);
+	if(!src){
+		//文件不存在
+		WarnL << "MP4文件不存在:" << filePath_str;
+		return (jlong)NULL;
+	}
+	//创建推流器并绑定一个MediaSource
+	pusher.reset(new MediaPusher(src,poller));	
+	
+	//设置推流中断处理逻辑
+    pusher->setOnShutdown([weakPusher,globalWeakRef](const SockException &ex) {
+        auto strongPusher = weakPusher.lock();
+        if (!strongPusher) {
+            return;
+        }
+        emitEvent((jobject)globalWeakRef,"onPushShutdown","(ILjava/lang/String;)V",(jint)ex.getErrCode(),env->NewStringUTF(ex.what()));
+    });
+	 //设置发布结果处理逻辑
+    pusher->setOnPublished([weakPusher,globalWeakRef](const SockException &ex) {
+		auto strongPusher = weakPusher.lock();
+        if (!strongPusher) {
+            return;
+        }
+        emitEvent((jobject)globalWeakRef,"onPushResult","(ILjava/lang/String;)V",(jint)ex.getErrCode(),env->NewStringUTF(ex.what()));
+
+        if(ex){
+            return;
+        }
+    });
+    pusher->publish(pushUrl_str);
+	ret = &pusher;
+	
+	//设置退出信号处理函数
+    static semaphore sem;
+    signal(SIGINT, [](int) { sem.post(); });// 设置退出信号
+    sem.wait();
+    pusher.reset();
+	
+	return (jlong)(ret);
+}
+JNI_API(void,releaseMediaPusher,jlong ptr){
+    MediaPusher::Ptr *pusher = (MediaPusher::Ptr *)ptr;
+    delete pusher;
+}
+JNI_API(jlong,createMediaProxy,jstring pollUrl,jstring pushUrl,jobject callback){
+	string pushUrl_str = stringFromJstring(env,pushUrl);
+	string playUrl = stringFromJstring(env,pollUrl);
+	string schema = FindField(pushUrl_str.data(), nullptr,"://").substr(0,4);
+	string vhost = DEFAULT_VHOST;
+	string app = "live";
+	string stream = "chn";
+	auto poller = EventPollerPool::Instance().getPoller();
+	//推流器，保持强引用
+	//MediaPusher::Ptr pusher,*ret;
+	PlayerProxy::Ptr player,*ret;
+	//weak_ptr<MediaPusher> weakPusher = pusher;
+	jobject globalWeakRef = env->NewWeakGlobalRef(callback);
+	
+	map<string, PlayerProxy::Ptr> proxyMap;
+	player.reset(new PlayerProxy(vhost, app, "chn0",false,false,-1 , poller));
+	//可以指定rtsp拉流方式，支持tcp和udp方式，默认tcp
+	//(*player)[Client::kRtpType] = Rtsp::RTP_UDP;
+	(*player)[Client::kRtpType] = Rtsp::RTP_TCP;
+	
+	weak_ptr<PlayerProxy> weakPlayer = player;
+	//开始播放，如果播放失败或者播放中止，将会自动重试若干次，默认一直重试
+	player->setPlayCallbackOnce([weakPlayer,globalWeakRef](const SockException &ex){
+		auto strongPlayer = weakPlayer.lock();
+		if (!strongPlayer) {
+			return;
+		}
+		
+		emitEvent((jobject)globalWeakRef,"onProxyResult","(ILjava/lang/String;)V",(jint)ex.getErrCode(),env->NewStringUTF(ex.what()));
+		
+		if(ex){
+			return;
+		}
+	});
+
+	//被主动关闭拉流
+	player->setOnClose([weakPlayer,globalWeakRef](){
+		emitEvent((jobject)globalWeakRef,"onProxyShutdown","(ILjava/lang/String;)V",0,"stream url Closed");
+	});
+	player->play(playUrl.data());
+	proxyMap.emplace("0", player);
+	 
+	/* pusher.reset(new MediaPusher(schema,vhost, app, stream,poller));
+	//监听RtmpMediaSource注册事件,在PlayerProxy播放成功后触发
+	NoticeCenter::Instance().addListener(nullptr, Broadcast::kBroadcastMediaChanged,
+										 [pusher,schema,vhost,app, stream,pushUrl_str,poller](BroadcastMediaChangedArgs) {
+											 //媒体源"live/stream"已经注册，这时方可新建一个RtmpPusher对象并绑定该媒体源
+											 if(bRegist && pushUrl_str.find(sender.getSchema()) == 0){
+												 //pusher.reset(new MediaPusher(schema,vhost, app, stream,poller));
+												 pusher->publish(pushUrl_str);
+											 }
+										 });
+	
+	//设置推流中断处理逻辑
+    pusher->setOnShutdown([weakPusher,globalWeakRef](const SockException &ex) {
+        auto strongPusher = weakPusher.lock();
+        if (!strongPusher) {
+            return;
+        }
+        emitEvent((jobject)globalWeakRef,"onPushShutdown","(ILjava/lang/String;)V",(jint)ex.getErrCode(),env->NewStringUTF(ex.what()));
+    });
+	 //设置发布结果处理逻辑
+    pusher->setOnPublished([weakPusher,globalWeakRef](const SockException &ex) {
+		auto strongPusher = weakPusher.lock();
+        if (!strongPusher) {
+            return;
+        }
+        emitEvent((jobject)globalWeakRef,"onPushResult","(ILjava/lang/String;)V",(jint)ex.getErrCode(),env->NewStringUTF(ex.what()));
+
+        if(ex){
+            return;
+        }
+    }); */
+    //pusher->publish(pushUrl_str);
+	ret = &player;
+	
+	//设置退出信号处理函数
+    static semaphore sem;
+    signal(SIGINT, [](int) { sem.post(); });// 设置退出信号
+    sem.wait();
+    player.reset();
+	
+	return (jlong)(ret);
+}
+JNI_API(void,releaseMediaProxy,jlong ptr){
+    PlayerProxy::Ptr *proxyer = (PlayerProxy::Ptr *)ptr;
+    delete proxyer;
 }

@@ -54,10 +54,10 @@ public class ZLMediaKit {
          */
         public int codecId;
     }
-
+	//流媒体播放
     static public interface MediaPlayerCallBack{
         void onPlayResult(int code,String msg);
-        void onShutdown(int code,String msg);
+        void onPlayShutdown(int code,String msg);
         void onData(MediaFrame frame);
     };
 
@@ -82,10 +82,70 @@ public class ZLMediaKit {
             release();
         }
     }
+	//本地推流
+	static public interface MediaPusherCallBack{
+        void onPushResult(int code,String msg);
+        void onPushShutdown(int code,String msg);
+        //void onPlayUrlResult(int code,String msg);
+		//void onPlayUrlShutdown(int code,String msg);
+    };
+	
+	static public class MediaPusher{
+        private long _ptr;
+        private MediaPusherCallBack _callback;
+        public MediaPusher(String filePath,String pushUrl,MediaPusherCallBack callBack){
+            _callback = callBack;
+            _ptr = createMediaPusher(filePath,pushUrl,callBack);
+        }
+        public void release(){
+            if(_ptr != 0){
+                releaseMediaPusher(_ptr);
+                _ptr = 0;
+            }
+        }
 
+        @Override
+        protected void finalize() throws Throwable {
+            super.finalize();
+            release();
+        }
+    }
+	//直播流代理
+	static public interface MediaProxyCallBack{
+        //void onPushResult(int code,String msg);
+        //void onPushShutdown(int code,String msg);
+        void onProxyResult(int code,String msg);
+		void onProxyShutdown(int code,String msg);
+    };
+	
+	static public class MediaProxy{
+        private long _ptr;
+        private MediaProxyCallBack _callback;
+        public MediaProxy(String pollUrl,String pushUrl,MediaProxyCallBack callBack){
+            _callback = callBack;
+            _ptr = createMediaProxy(pollUrl,pushUrl,callBack);
+        }
+        public void release(){
+            if(_ptr != 0){
+                releaseMediaProxy(_ptr);
+                _ptr = 0;
+            }
+        }
+
+        @Override
+        protected void finalize() throws Throwable {
+            super.finalize();
+            release();
+        }
+    }
+	
     static public native boolean startDemo(String sd_path);
     static public native void releaseMediaPlayer(long ptr);
     static public native long createMediaPlayer(String url,MediaPlayerCallBack callback);
+	static public native void releaseMediaPusher(long ptr);
+    static public native long createMediaPusher(String filePath,String pushUrl,MediaPusherCallBack callback);
+	static public native void releaseMediaProxy(long ptr);
+    static public native long createMediaProxy(String pollUrl,String pushUrl,MediaProxyCallBack callback);
 
     static {
         System.loadLibrary("zlmediakit_jni");
