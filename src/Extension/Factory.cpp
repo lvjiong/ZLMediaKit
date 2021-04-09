@@ -26,7 +26,8 @@
 namespace mediakit{
 
 Track::Ptr Factory::getTrackBySdp(const SdpTrack::Ptr &track) {
-    if (strcasecmp(track->_codec.data(), "mpeg4-generic") == 0) {
+    DebugL << "该sdp:" << track->getName() << " codec:" << track->_codec.data();
+    if (strcasecmp(track->_codec.data(), "mpeg4-generic") == 0 || strcasecmp(track->_codec.data(), "MP4A-LATM") == 0) {
         string aac_cfg_str = FindField(track->_fmtp.data(), "config=", nullptr);
         if (aac_cfg_str.empty()) {
             aac_cfg_str = FindField(track->_fmtp.data(), "config=", ";");

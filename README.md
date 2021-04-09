@@ -2,6 +2,8 @@
 
 [english readme](https://github.com/xia-chu/ZLMediaKit/blob/master/README_en.md)
 
+# 20210409更新点  
+1.添加对ffmpeg 推AAC音频支持，使用方法：ffmpeg -re -i test.aac -acodec copy -vn -rtpflags latm -f rtsp rtsp://10.138.80.2:554/live/aac  
 # 20210408更新点  
 1.JNI增加Push接口  
 2.MP4文件支持重复播放，如果是bin的形式运行可修改INI文件里的filerepate的值为True，或代码里的kFileRepeat为True，具体看情况如果指定-c 参数就config.ini生效，如果不指定就代码默认值有效(src/Common/config.cpp 或main程序中重新赋值)  
